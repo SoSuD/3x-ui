@@ -11,10 +11,14 @@ RUN apk --no-cache --update add \
   wget \
   unzip
 
+COPY go.mod go.sum ./
+RUN go mod download
+
 COPY . .
 
 ENV CGO_ENABLED=1
 ENV CGO_CFLAGS="-D_LARGEFILE64_SOURCE"
+
 RUN go build -ldflags "-w -s" -o build/x-ui main.go
 RUN ./DockerInit.sh "$TARGETARCH"
 
@@ -37,18 +41,18 @@ COPY --from=builder /app/x-ui.sh /usr/bin/x-ui
 
 
 # Configure fail2ban
-RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
-  && cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local \
-  && sed -i "s/^\[ssh\]$/&\nenabled = false/" /etc/fail2ban/jail.local \
-  && sed -i "s/^\[sshd\]$/&\nenabled = false/" /etc/fail2ban/jail.local \
-  && sed -i "s/#allowipv6 = auto/allowipv6 = auto/g" /etc/fail2ban/fail2ban.conf
+#RUN rm -f /etc/fail2ban/jail.d/alpine-ssh.conf \
+#  && cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local \
+#  && sed -i "s/^\[ssh\]$/&\nenabled = false/" /etc/fail2ban/jail.local \
+#  && sed -i "s/^\[sshd\]$/&\nenabled = false/" /etc/fail2ban/jail.local \
+#  && sed -i "s/#allowipv6 = auto/allowipv6 = auto/g" /etc/fail2ban/fail2ban.conf
 
 RUN chmod +x \
   /app/DockerEntrypoint.sh \
   /app/x-ui \
   /usr/bin/x-ui
 
-ENV XUI_ENABLE_FAIL2BAN="true"
+ENV XUI_ENABLE_FAIL2BAN="false"
 VOLUME [ "/etc/x-ui" ]
 CMD [ "./x-ui" ]
 ENTRYPOINT [ "/app/DockerEntrypoint.sh" ]
