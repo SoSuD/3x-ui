@@ -624,6 +624,8 @@ func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool,
 }
 
 func (s *InboundService) UpdateInboundClient(data *model.Inbound, clientId string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	clients, err := s.GetClients(data)
 	if err != nil {
 		return false, err
@@ -736,8 +738,6 @@ func (s *InboundService) UpdateInboundClient(data *model.Inbound, clientId strin
 	}
 	needRestart := false
 	if len(oldEmail) > 0 {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		s.xrayApi.Init(p.GetAPIPort())
 		if oldClients[clientIndex].Enable {
 			err1 := s.xrayApi.RemoveUser(oldInbound.Tag, oldEmail)
