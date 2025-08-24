@@ -422,13 +422,13 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	}
 
 	interfaceClients := settings["clients"].([]any)
-	existEmail, err := s.checkEmailsExistForClients(clients)
+	_, err = s.checkEmailsExistForClients(clients)
 	if err != nil {
 		return false, err
 	}
-	if existEmail != "" {
-		return false, common.NewError("Duplicate email:", existEmail)
-	}
+	//if existEmail != "" {
+	//	return false, common.NewError("Duplicate email:", existEmail)
+	//}
 
 	oldInbound, err := s.GetInbound(data.Id)
 	if err != nil {
@@ -486,7 +486,9 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	s.xrayApi.Init(p.GetAPIPort())
 	for _, client := range clients {
 		if len(client.Email) > 0 {
-			s.AddClientStat(tx, data.Id, &client)
+			if err := s.AddClientStat(tx, data.Id, &client); err != nil {
+				return needRestart, err
+			}
 			if client.Enable {
 				cipher := ""
 				if oldInbound.Protocol == "shadowsocks" {
