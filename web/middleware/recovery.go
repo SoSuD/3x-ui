@@ -3,13 +3,13 @@ package middleware
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"runtime/debug"
 	"strings"
 	"time"
+	"x-ui/logger"
 
 	"github.com/gin-gonic/gin"
 )
@@ -40,7 +40,7 @@ func RecoveryJSON() gin.HandlerFunc {
 				// Стек для логов
 				stack := debug.Stack()
 
-				log.Printf("[PANIC] %s | %s %s | brokenPipe=%t | err=%v\nRequest:\n%s\nStack:\n%s",
+				logger.Debugf("[PANIC] %s | %s %s | brokenPipe=%t | err=%v\nRequest:\n%s\nStack:\n%s",
 					time.Since(start), c.Request.Method, c.Request.URL.String(),
 					brokenPipe, err, reqDump, stack,
 				)
