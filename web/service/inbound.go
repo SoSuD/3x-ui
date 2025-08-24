@@ -422,10 +422,10 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	}
 
 	interfaceClients := settings["clients"].([]any)
-	_, err = s.checkEmailsExistForClients(clients)
-	if err != nil {
-		return false, err
-	}
+	//_, err = s.checkEmailsExistForClients(clients)
+	//if err != nil {
+	//	return false, err
+	//}
 	//if existEmail != "" {
 	//	return false, common.NewError("Duplicate email:", existEmail)
 	//}
