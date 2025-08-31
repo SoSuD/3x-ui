@@ -241,6 +241,8 @@ func (s *InboundService) AddInbound(inbound *model.Inbound) (*model.Inbound, boo
 }
 
 func (s *InboundService) DelInbound(id int) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	db := database.GetDB()
 
 	var tag string
@@ -297,6 +299,8 @@ func (s *InboundService) GetInbound(id int) (*model.Inbound, error) {
 }
 
 func (s *InboundService) UpdateInbound(inbound *model.Inbound) (*model.Inbound, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	exist, err := s.checkPortExist(inbound.Listen, inbound.Port, inbound.Id)
 	if err != nil {
 		return inbound, false, err
@@ -375,6 +379,8 @@ func (s *InboundService) UpdateInbound(inbound *model.Inbound) (*model.Inbound, 
 }
 
 func (s *InboundService) updateClientTraffics(tx *gorm.DB, oldInbound *model.Inbound, newInbound *model.Inbound) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	oldClients, err := s.GetClients(oldInbound)
 	if err != nil {
 		return err
@@ -533,6 +539,8 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 }
 
 func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	oldInbound, err := s.GetInbound(inboundId)
 	if err != nil {
 		logger.Error("Load Old Data Error")
