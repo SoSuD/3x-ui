@@ -539,6 +539,8 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 }
 
 func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	oldInbound, err := s.GetInbound(inboundId)
 	if err != nil {
 		logger.Error("Load Old Data Error")
@@ -607,8 +609,6 @@ func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool,
 			return false, err
 		}
 		if needApiDel && notDepleted {
-			s.mu.Lock()
-			defer s.mu.Unlock()
 			s.xrayApi.Init(p.GetAPIPort())
 			err1 := s.xrayApi.RemoveUser(oldInbound.Tag, email)
 			if err1 == nil {
