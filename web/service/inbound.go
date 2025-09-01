@@ -630,161 +630,16 @@ func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool,
 }
 
 func (s *InboundService) UpdateInboundClient(data *model.Inbound, clientId string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	clients, err := s.GetClients(data)
+	g, err := s.DelInboundClient(data.Id, clientId)
 	if err != nil {
 		return false, err
 	}
-
-	var settings map[string]any
-	err = json.Unmarshal([]byte(data.Settings), &settings)
+	g, err = s.AddInboundClient(data)
 	if err != nil {
 		return false, err
 	}
+	return g, nil
 
-	interfaceClients := settings["clients"].([]any)
-
-	oldInbound, err := s.GetInbound(data.Id)
-	if err != nil {
-		return false, err
-	}
-
-	oldClients, err := s.GetClients(oldInbound)
-	if err != nil {
-		return false, err
-	}
-
-	oldEmail := ""
-	newClientId := ""
-	clientIndex := -1
-	for index, oldClient := range oldClients {
-		oldClientId := ""
-		switch oldInbound.Protocol {
-		case "trojan":
-			oldClientId = oldClient.Password
-			newClientId = clients[0].Password
-		case "shadowsocks":
-			oldClientId = oldClient.Email
-			newClientId = clients[0].Email
-		default:
-			oldClientId = oldClient.ID
-			newClientId = clients[0].ID
-		}
-		if clientId == oldClientId {
-			oldEmail = oldClient.Email
-			clientIndex = index
-			break
-		}
-	}
-
-	// Validate new client ID
-	if newClientId == "" || clientIndex == -1 {
-		return false, common.NewError("empty client ID")
-	}
-
-	if len(clients[0].Email) > 0 && clients[0].Email != oldEmail {
-		existEmail, err := s.checkEmailsExistForClients(clients)
-		if err != nil {
-			return false, err
-		}
-		if existEmail != "" {
-			return false, common.NewError("Duplicate email:", existEmail)
-		}
-	}
-
-	var oldSettings map[string]any
-	err = json.Unmarshal([]byte(oldInbound.Settings), &oldSettings)
-	if err != nil {
-		return false, err
-	}
-	settingsClients := oldSettings["clients"].([]any)
-	settingsClients[clientIndex] = interfaceClients[0]
-	oldSettings["clients"] = settingsClients
-
-	newSettings, err := json.MarshalIndent(oldSettings, "", "  ")
-	if err != nil {
-		return false, err
-	}
-
-	oldInbound.Settings = string(newSettings)
-	db := database.GetDB()
-	tx := db.Begin()
-
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		} else {
-			tx.Commit()
-		}
-	}()
-
-	if len(clients[0].Email) > 0 {
-		if len(oldEmail) > 0 {
-			err = s.UpdateClientStat(tx, oldEmail, &clients[0])
-			if err != nil {
-				return false, err
-			}
-			err = s.UpdateClientIPs(tx, oldEmail, clients[0].Email)
-			if err != nil {
-				return false, err
-			}
-		} else {
-			s.AddClientStat(tx, data.Id, &clients[0])
-		}
-	} else {
-		err = s.DelClientStat(tx, oldEmail)
-		if err != nil {
-			return false, err
-		}
-		err = s.DelClientIPs(tx, oldEmail)
-		if err != nil {
-			return false, err
-		}
-	}
-	needRestart := false
-	if len(oldEmail) > 0 {
-		s.xrayApi.Init(p.GetAPIPort())
-		if oldClients[clientIndex].Enable {
-			err1 := s.xrayApi.RemoveUser(oldInbound.Tag, oldEmail)
-			if err1 == nil {
-				logger.Debug("Old client deleted by api:", oldEmail)
-			} else {
-				if strings.Contains(err1.Error(), fmt.Sprintf("User %s not found.", oldEmail)) {
-					logger.Debug("User is already deleted. Nothing to do more...")
-				} else {
-					logger.Debug("Error in deleting client by api:", err1)
-					needRestart = true
-				}
-			}
-		}
-		if clients[0].Enable {
-			cipher := ""
-			if oldInbound.Protocol == "shadowsocks" {
-				cipher = oldSettings["method"].(string)
-			}
-			err1 := s.xrayApi.AddUser(string(oldInbound.Protocol), oldInbound.Tag, map[string]any{
-				"email":    clients[0].Email,
-				"id":       clients[0].ID,
-				"security": clients[0].Security,
-				"flow":     clients[0].Flow,
-				"password": clients[0].Password,
-				"cipher":   cipher,
-			})
-			if err1 == nil {
-				logger.Debug("Client edited by api:", clients[0].Email)
-			} else {
-				logger.Debug("Error in adding client by api:", err1)
-				needRestart = true
-			}
-		}
-		s.xrayApi.Close()
-
-	} else {
-		logger.Debug("Client old email not found")
-		needRestart = true
-	}
-	return needRestart, tx.Save(oldInbound).Error
 }
 
 func (s *InboundService) AddTraffic(inboundTraffics []*xray.Traffic, clientTraffics []*xray.ClientTraffic) (error, bool) {
