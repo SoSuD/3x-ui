@@ -601,7 +601,6 @@ func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool,
 		err = s.DelClientStat(db, email)
 		if err != nil {
 			logger.Error("Delete stats Data Error")
-			return false, err
 		}
 		if needApiDel && notDepleted {
 			s.xrayApi.Init(p.GetAPIPort())
