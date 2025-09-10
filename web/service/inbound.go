@@ -588,7 +588,6 @@ func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool,
 	err = s.DelClientIPs(db, email)
 	if err != nil {
 		logger.Error("Error in delete client IPs")
-		return false, err
 	}
 	needRestart := false
 
