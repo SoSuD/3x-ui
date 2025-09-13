@@ -249,8 +249,6 @@ func (s *InboundService) DelInbound(id int) (bool, error) {
 	needRestart := false
 	result := db.Model(model.Inbound{}).Select("tag").Where("id = ? and enable = ?", id, true).First(&tag)
 	if result.Error == nil {
-		s.mu.Lock()
-		defer s.mu.Unlock()
 		s.xrayApi.Init(p.GetAPIPort())
 		err1 := s.xrayApi.DelInbound(tag)
 		if err1 == nil {
@@ -436,10 +434,10 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	}
 
 	interfaceClients := settings["clients"].([]any)
-	//_, err = s.checkEmailsExistForClients(clients)
-	//if err != nil {
-	//	return false, err
-	//}
+	_, err = s.checkEmailsExistForClients(clients)
+	if err != nil {
+		return false, err
+	}
 	//if existEmail != "" {
 	//	return false, common.NewError("Duplicate email:", existEmail)
 	//}
