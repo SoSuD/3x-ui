@@ -420,8 +420,6 @@ func (s *InboundService) updateClientTraffics(tx *gorm.DB, oldInbound *model.Inb
 }
 
 func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	clients, err := s.GetClients(data)
 	if err != nil {
 		return false, err
@@ -441,29 +439,19 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	//if existEmail != "" {
 	//	return false, common.NewError("Duplicate email:", existEmail)
 	//}
-
+	for _, client := range clients {
+		if client.ID == "" {
+			return false, common.NewError("empty client ID")
+		}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	oldInbound, err := s.GetInbound(data.Id)
 	if err != nil {
 		return false, err
 	}
 
 	// Secure client ID
-	for _, client := range clients {
-		switch oldInbound.Protocol {
-		case "trojan":
-			if client.Password == "" {
-				return false, common.NewError("empty client ID")
-			}
-		case "shadowsocks":
-			if client.Email == "" {
-				return false, common.NewError("empty client ID")
-			}
-		default:
-			if client.ID == "" {
-				return false, common.NewError("empty client ID")
-			}
-		}
-	}
 
 	var oldSettings map[string]any
 	err = json.Unmarshal([]byte(oldInbound.Settings), &oldSettings)
@@ -484,22 +472,13 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	oldInbound.Settings = string(newSettings)
 
 	db := database.GetDB()
-	tx := db.Begin()
-
-	defer func() {
-		if err != nil {
-			tx.Rollback()
-		} else {
-			tx.Commit()
-		}
-	}()
 
 	needRestart := false
 
 	s.xrayApi.Init(p.GetAPIPort())
 	for _, client := range clients {
 		if len(client.Email) > 0 {
-			if err := s.AddClientStat(tx, data.Id, &client); err != nil {
+			if err := s.AddClientStat(db, data.Id, &client); err != nil {
 				return needRestart, err
 			}
 			if client.Enable {
@@ -529,7 +508,7 @@ func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
 	}
 	s.xrayApi.Close()
 
-	return needRestart, tx.Save(oldInbound).Error
+	return needRestart, db.Save(oldInbound).Error
 }
 
 func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool, error) {
