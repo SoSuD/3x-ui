@@ -428,140 +428,100 @@ func (s *InboundService) updateClientTraffics(tx *gorm.DB, oldInbound *model.Inb
 }
 
 func (s *InboundService) AddInboundClient(data *model.Inbound) (bool, error) {
-	type inboundSettings struct {
-		Clients []model.Client `json:"clients"`
-		Method  string         `json:"method,omitempty"` // для shadowsocks
-	}
-
-	// Разобрать входящие clients из data.Settings
-	var incoming inboundSettings
-	if err := json.Unmarshal([]byte(data.Settings), &incoming); err != nil {
-		return false, err
-	}
-	clients := incoming.Clients
-	if len(clients) == 0 {
-		return false, nil
-	}
-
-	// Проверка дублей email среди добавляемых/имеющихся в БД
-	if _, err := s.checkEmailsExistForClients(clients); err != nil {
+	clients, err := s.GetClients(data)
+	if err != nil {
 		return false, err
 	}
 
-	// ====== ПЕР-INBOUND ЛОК НА БД-УЧАСТОК ======
+	var settings map[string]any
+	if err = json.Unmarshal([]byte(data.Settings), &settings); err != nil {
+		return false, err
+	}
+
+	interfaceClients, _ := settings["clients"].([]any)
+
+	if _, err = s.checkEmailsExistForClients(clients); err != nil {
+		return false, err
+	}
+	for _, client := range clients {
+		if client.ID == "" {
+			return false, common.NewError("empty client ID")
+		}
+	}
+
+	// === ЛОК ТОЛЬКО ПО ЭТОМУ inbound.Id ===
 	unlock := s.lockInbound(data.Id)
 	defer unlock()
 
-	// Загрузить актуальный inbound (под локом)
+	// дальше — твой прежний парсинг/слияние
 	oldInbound, err := s.GetInbound(data.Id)
 	if err != nil {
 		return false, err
 	}
 
-	// Разобрать текущие settings
-	var oldSet inboundSettings
-	if err := json.Unmarshal([]byte(oldInbound.Settings), &oldSet); err != nil {
+	var oldSettings map[string]any
+	if err = json.Unmarshal([]byte(oldInbound.Settings), &oldSettings); err != nil {
 		return false, err
 	}
 
-	// Валидация ID по протоколу
-	for _, c := range clients {
-		switch oldInbound.Protocol {
-		case "trojan":
-			if c.Password == "" {
-				return false, common.NewError("empty client ID")
-			}
-		case "shadowsocks":
-			if c.Email == "" {
-				return false, common.NewError("empty client ID")
-			}
-		default:
-			if c.ID == "" {
-				return false, common.NewError("empty client ID")
-			}
-		}
-	}
+	oldClients, _ := oldSettings["clients"].([]any)
+	oldClients = append(oldClients, interfaceClients...)
+	oldSettings["clients"] = oldClients
 
-	// Слить клиентов
-	oldSet.Clients = append(oldSet.Clients, clients...)
-
-	// Одна короткая транзакция: AddClientStat + Save(settings)
-	db := database.GetDB()
-	tx := db.Begin()
-	commit := false
-	defer func() {
-		if !commit {
-			_ = tx.Rollback()
-		}
-	}()
-
-	for i := range clients {
-		if clients[i].Email != "" {
-			if err := s.AddClientStat(tx, data.Id, &clients[i]); err != nil {
-				return false, err
-			}
-		}
-	}
-
-	settingsBytes, err := json.Marshal(oldSet) // без Indent — быстрее
+	newSettings, err := json.Marshal(oldSettings) // без Indent — быстрее и короче
 	if err != nil {
 		return false, err
 	}
-	oldInbound.Settings = string(settingsBytes)
+	oldInbound.Settings = string(newSettings)
 
-	if err := tx.Save(oldInbound).Error; err != nil {
-		return false, err
-	}
-	if err := tx.Commit().Error; err != nil {
-		return false, err
-	}
-	commit = true
-	// ====== ПЕР-INBOUND ЛОК ЗДЕСЬ ЕЩЁ ДЕРЖИМ (до конца функции),
-	// чтобы второй параллельный AddInboundClient для того же inbound не влез между БД и XRAY ======
+	db := database.GetDB()
 
-	// Подготовка для XRAY
 	needRestart := false
-	enabled := make([]model.Client, 0, len(clients))
-	for _, c := range clients {
-		if c.Enable && c.Email != "" {
-			enabled = append(enabled, c)
-		}
-	}
-	if len(enabled) == 0 {
-		return false, nil
-	}
 
-	cipher := ""
-	if oldInbound.Protocol == "shadowsocks" {
-		cipher = oldSet.Method
-	}
-
-	// КОРОТКИЙ ЛОК ТОЛЬКО НА XRAY API
-	s.muXray.Lock()
+	// Статистика + XRAY
+	s.muXray.Lock() // xrayApi — под глобальным, как и раньше
 	defer s.muXray.Unlock()
 
 	if err := s.xrayApi.Init(p.GetAPIPort()); err != nil {
-		// Не смогли подключиться к API — попросим рестарт XRAY с новыми настройками
-		return true, nil
+		return true, nil // попросим рестарт, если API недоступен
 	}
-	for _, c := range enabled {
-		if err := s.xrayApi.AddUser(string(oldInbound.Protocol), oldInbound.Tag, map[string]any{
-			"email":    c.Email,
-			"id":       c.ID,
-			"security": c.Security,
-			"flow":     c.Flow,
-			"password": c.Password,
-			"cipher":   cipher,
-		}); err != nil {
-			logger.Debug("Error in adding client by api:", err)
-			needRestart = true
+
+	for _, client := range clients {
+		if len(client.Email) > 0 {
+			if err := s.AddClientStat(db, data.Id, &client); err != nil {
+				s.xrayApi.Close()
+				return needRestart, err
+			}
+			if client.Enable {
+				cipher := ""
+				if oldInbound.Protocol == "shadowsocks" {
+					if m, ok := oldSettings["method"].(string); ok {
+						cipher = m
+					}
+				}
+
+				if err1 := s.xrayApi.AddUser(string(oldInbound.Protocol), oldInbound.Tag, map[string]any{
+					"email":    client.Email,
+					"id":       client.ID,
+					"security": client.Security,
+					"flow":     client.Flow,
+					"password": client.Password,
+					"cipher":   cipher,
+				}); err1 != nil {
+					logger.Debug("Error in adding client by api:", err1)
+					needRestart = true
+				} else {
+					logger.Debug("Client added by api:", client.Email)
+				}
+			}
 		} else {
-			logger.Debug("Client added by api:", c.Email)
+			needRestart = true
 		}
 	}
+
 	s.xrayApi.Close()
 
-	return needRestart, nil
+	return needRestart, db.Save(oldInbound).Error
 }
 
 func (s *InboundService) DelInboundClient(inboundId int, clientId string) (bool, error) {
